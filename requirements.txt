@@ -1,0 +1,4 @@
+# The project uses only the Python standard library (including Tkinter),
+# so there is nothing to install to run it.
+#
+# Linux only: if "import tkinter" fails, run:  sudo apt install python3-tk
