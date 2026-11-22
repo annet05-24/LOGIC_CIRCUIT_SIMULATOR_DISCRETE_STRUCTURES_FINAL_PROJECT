@@ -5,6 +5,7 @@ This file only DISPLAYS things. It never computes logic itself: it asks the
 backend for a circuit, wire values and a truth table, then draws them.
 """
 import tkinter as tk
+import traceback
 
 from logic_sim import backend
 from logic_sim.ui import shapes
@@ -14,6 +15,8 @@ OFF_COLOR = "#9ca3af"   # grey  = signal is 0
 GATE_FILL = "#f3f4f6"
 ROW_HIGHLIGHT = "#fde68a"   # yellow = the truth table row that matches the toggles
 ROW_NORMAL = "white"
+MATCH_COLOR = ON_COLOR          # green text: table and circuit agree
+MISMATCH_COLOR = "#dc2626"      # red text: they disagree
 GATE_W, GATE_H = shapes.GATE_W, shapes.GATE_H
 INPUT_R = 14
 
@@ -48,6 +51,11 @@ class SimulatorApp:
         self.toggle_frame = tk.Frame(self.root, padx=8, pady=4)
         self.toggle_frame.pack(fill="x")
 
+        # Task 7: tells you whether the truth table and the circuit agree.
+        self.status_label = tk.Label(self.root, text="", font=("Arial", 11, "bold"),
+                                     anchor="w", padx=8)
+        self.status_label.pack(fill="x")
+
         # The circuit on the left, the truth table on the right.
         main = tk.Frame(self.root)
         main.pack(padx=8, pady=8)
@@ -65,16 +73,31 @@ class SimulatorApp:
         try:
             circuit = backend.get_circuit(text)
             table = backend.get_truth_table(text)
-        except ValueError as err:
-            self.error_label.config(text=str(err))
+            self.circuit = circuit       # only replace the old ones once BOTH worked
+            self.table = table
+            self._make_toggles()
+            self._build_table()
+        except Exception as err:
+            self._report(err, "building the circuit")
             return     # keep whatever was on screen before
 
         self.error_label.config(text="")
-        self.circuit = circuit
-        self.table = table
-        self._make_toggles()
-        self._build_table()
         self.update_circuit()
+
+    def _report(self, err, doing):
+        """Show an error in red. `doing` says what we were trying to do.
+
+        Call this from inside an `except` block.
+        """
+        if isinstance(err, ValueError):
+            message = str(err)                      # the user's input is wrong: show it as is
+        elif isinstance(err, NotImplementedError):
+            message = "Not built yet: " + str(err)  # a teammate's part is still a placeholder
+        else:
+            message = ("Unexpected error while " + doing + ": "
+                       + type(err).__name__ + ": " + str(err))
+            traceback.print_exc()                   # full details go to the terminal
+        self.error_label.config(text=message)
 
     def _make_toggles(self):
         """One checkbox per input variable found in the circuit."""
@@ -93,9 +116,13 @@ class SimulatorApp:
     def update_circuit(self):
         """Read the toggles, ask the backend for wire values, then redraw."""
         assignment = {name: var.get() for name, var in self.toggle_vars.items()}
-        self.values = backend.propagate(self.circuit, assignment)
-        self.draw()
-        self._highlight_row(assignment)
+        try:
+            self.values = backend.propagate(self.circuit, assignment)
+            self.draw()
+            self._highlight_row(assignment)
+            self._update_status(assignment)
+        except Exception as err:
+            self._report(err, "updating the circuit")
 
     # ---- the truth table ------------------------------------------------
     def _build_table(self):
@@ -120,18 +147,40 @@ class SimulatorApp:
                 cells.append(cell)
             self.row_labels.append(cells)
 
-    def _highlight_row(self, assignment):
-        """Color the row that matches the current toggles; the others stay white."""
-        match = None
+    def _find_row(self, assignment):
+        """Return the index of the truth table row matching `assignment`, or None."""
         for i, row in enumerate(self.table["rows"]):
             if row["inputs"] == assignment:
-                match = i
-                break
+                return i
+        return None
+
+    def _highlight_row(self, assignment):
+        """Color the row that matches the current toggles; the others stay white."""
+        match = self._find_row(assignment)
 
         for i, cells in enumerate(self.row_labels):
             color = ROW_HIGHLIGHT if i == match else ROW_NORMAL
             for cell in cells:
                 cell.config(bg=color)
+
+    def _update_status(self, assignment):
+        """Compare the table's expected output with the circuit's actual output."""
+        index = self._find_row(assignment)
+        if index is None:
+            self.status_label.config(text="No truth table row matches these inputs.",
+                                     fg=MISMATCH_COLOR)
+            return
+
+        expected = self.table["rows"][index]["output"]            # from the truth table
+        actual = self.values[self.circuit["output"]["id"]]        # from the circuit
+
+        if expected == actual:
+            text = "Expected " + str(expected) + " (truth table), circuit gives " + str(actual) + " - match"
+            color = MATCH_COLOR
+        else:
+            text = "MISMATCH: truth table expects " + str(expected) + ", circuit gives " + str(actual)
+            color = MISMATCH_COLOR
+        self.status_label.config(text=text, fg=color)
 
     # ---- drawing the circuit --------------------------------------------
     def _color(self, node_id):
