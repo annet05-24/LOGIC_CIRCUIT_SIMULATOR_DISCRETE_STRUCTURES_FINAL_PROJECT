@@ -2,15 +2,19 @@
 MEMBER 3: User interface for the Logic Circuit Simulator.
 
 This file only DISPLAYS things. It never computes logic itself: it asks the
-backend for a circuit and for wire values, then draws them.
+backend for a circuit, wire values and a truth table, then draws them.
 """
 import tkinter as tk
 
 from logic_sim import backend
+from logic_sim.ui import shapes
 
 ON_COLOR = "#16a34a"    # green = signal is 1
 OFF_COLOR = "#9ca3af"   # grey  = signal is 0
-GATE_W, GATE_H = 70, 44
+GATE_FILL = "#f3f4f6"
+ROW_HIGHLIGHT = "#fde68a"   # yellow = the truth table row that matches the toggles
+ROW_NORMAL = "white"
+GATE_W, GATE_H = shapes.GATE_W, shapes.GATE_H
 INPUT_R = 14
 
 
@@ -20,8 +24,10 @@ class SimulatorApp:
         root.title("Logic Circuit Simulator")
 
         self.circuit = None      # the circuit graph from the backend
+        self.table = None        # the truth table from the backend
         self.toggle_vars = {}    # {"A": IntVar, ...} one per input variable
         self.values = {}         # {node_id: 0 or 1} from propagation
+        self.row_labels = []     # row_labels[i] = the labels of truth table row i
 
         self._build_widgets()
 
@@ -42,21 +48,32 @@ class SimulatorApp:
         self.toggle_frame = tk.Frame(self.root, padx=8, pady=4)
         self.toggle_frame.pack(fill="x")
 
-        self.canvas = tk.Canvas(self.root, width=600, height=300, bg="white")
-        self.canvas.pack(padx=8, pady=8)
+        # The circuit on the left, the truth table on the right.
+        main = tk.Frame(self.root)
+        main.pack(padx=8, pady=8)
+
+        self.canvas = tk.Canvas(main, width=600, height=300, bg="white")
+        self.canvas.pack(side="left")
+
+        self.table_frame = tk.Frame(main, padx=12)
+        self.table_frame.pack(side="left", anchor="n")
 
     # ---- reacting to the user -------------------------------------------
     def on_build(self):
         """Called when 'Build circuit' is clicked."""
         text = self.entry.get().strip()
         try:
-            self.circuit = backend.get_circuit(text)
+            circuit = backend.get_circuit(text)
+            table = backend.get_truth_table(text)
         except ValueError as err:
             self.error_label.config(text=str(err))
-            return
+            return     # keep whatever was on screen before
 
         self.error_label.config(text="")
+        self.circuit = circuit
+        self.table = table
         self._make_toggles()
+        self._build_table()
         self.update_circuit()
 
     def _make_toggles(self):
@@ -78,8 +95,45 @@ class SimulatorApp:
         assignment = {name: var.get() for name, var in self.toggle_vars.items()}
         self.values = backend.propagate(self.circuit, assignment)
         self.draw()
+        self._highlight_row(assignment)
 
-    # ---- drawing --------------------------------------------------------
+    # ---- the truth table ------------------------------------------------
+    def _build_table(self):
+        """Create the table as a grid of labels. Grid row 0 is the header."""
+        for widget in self.table_frame.winfo_children():
+            widget.destroy()
+        self.row_labels = []
+
+        variables = self.table["variables"]
+        for col, text in enumerate(variables + ["Output"]):
+            header = tk.Label(self.table_frame, text=text, width=6, bg="#e5e7eb",
+                              font=("Arial", 10, "bold"), relief="solid", borderwidth=1)
+            header.grid(row=0, column=col)
+
+        for i, row in enumerate(self.table["rows"]):
+            values = [row["inputs"][name] for name in variables] + [row["output"]]
+            cells = []
+            for col, value in enumerate(values):
+                cell = tk.Label(self.table_frame, text=str(value), width=6,
+                                bg=ROW_NORMAL, relief="solid", borderwidth=1)
+                cell.grid(row=i + 1, column=col)      # +1 because row 0 is the header
+                cells.append(cell)
+            self.row_labels.append(cells)
+
+    def _highlight_row(self, assignment):
+        """Color the row that matches the current toggles; the others stay white."""
+        match = None
+        for i, row in enumerate(self.table["rows"]):
+            if row["inputs"] == assignment:
+                match = i
+                break
+
+        for i, cells in enumerate(self.row_labels):
+            color = ROW_HIGHLIGHT if i == match else ROW_NORMAL
+            for cell in cells:
+                cell.config(bg=color)
+
+    # ---- drawing the circuit --------------------------------------------
     def _color(self, node_id):
         return ON_COLOR if self.values[node_id] == 1 else OFF_COLOR
 
@@ -96,21 +150,45 @@ class SimulatorApp:
         return node["x"] + INPUT_R, node["y"]
 
     def _input_point(self, gate, index):
-        """Where wire number `index` enters a gate (left side, spread out)."""
+        """Where wire number `index` enters a gate (left side, spread out).
+
+        The wire ends 8 pixels INSIDE the gate. Gates are drawn on top of the
+        wires, so this hides the wire's end and closes the gap at the curved
+        back of the OR gate.
+        """
         count = len(gate["inputs"])
         y = gate["y"] + (index - (count - 1) / 2) * 16
-        return gate["x"] - GATE_W / 2, y
+        return gate["x"] - GATE_W / 2 + 8, y
 
     def _draw_wire(self, x1, y1, x2, y2, color):
         mid = (x1 + x2) / 2
         self.canvas.create_line(x1, y1, mid, y1, mid, y2, x2, y2, fill=color, width=3)
 
-    def draw(self):
+    def _draw_node(self, node_id, x, y, text):
+        """A circle (input or output) showing `text`, colored by its value."""
         c = self.canvas
-        c.delete("all")   # clear, then redraw everything with the new values
+        c.create_oval(x - INPUT_R, y - INPUT_R, x + INPUT_R, y + INPUT_R,
+                      fill=self._color(node_id), outline="black")
+        c.create_text(x, y, text=text, fill="white", font=("Arial", 11, "bold"))
+
+    def _draw_gate(self, gate):
+        """A gate symbol (AND, OR or NOT), outlined by its value."""
+        x, y = gate["x"], gate["y"]
+        color = self._color(gate["id"])
+        points = shapes.points_for(gate["type"], x, y)
+        self.canvas.create_polygon(points, fill=GATE_FILL, outline=color, width=3)
+
+        if gate["type"] == "NOT":
+            # the small circle on the tip: center 5 pixels inside the right edge
+            cx = x + GATE_W / 2 - 5
+            self.canvas.create_oval(cx - 5, y - 5, cx + 5, y + 5,
+                                    fill=GATE_FILL, outline=color, width=3)
+
+    def draw(self):
+        self.canvas.delete("all")   # clear, then redraw with the new values
         nodes = self._lookup()
 
-        # Wires first, so the nodes are drawn on top of their ends.
+        # Wires first, so the shapes are drawn on top of the wire ends.
         for gate in self.circuit["gates"]:
             for i, source_id in enumerate(gate["inputs"]):
                 sx, sy = self._output_point(nodes[source_id])
@@ -122,24 +200,10 @@ class SimulatorApp:
         self._draw_wire(sx, sy, out["x"] - INPUT_R, out["y"], self._color(out["from"]))
 
         for node in self.circuit["inputs"]:
-            x, y = node["x"], node["y"]
-            c.create_oval(x - INPUT_R, y - INPUT_R, x + INPUT_R, y + INPUT_R,
-                          fill=self._color(node["id"]), outline="black")
-            c.create_text(x, y, text=node["id"], fill="white", font=("Arial", 11, "bold"))
-
+            self._draw_node(node["id"], node["x"], node["y"], node["id"])
         for gate in self.circuit["gates"]:
-            x, y = gate["x"], gate["y"]
-            c.create_rectangle(x - GATE_W / 2, y - GATE_H / 2,
-                               x + GATE_W / 2, y + GATE_H / 2,
-                               fill="#f3f4f6", outline=self._color(gate["id"]), width=3)
-            c.create_text(x, y, text=gate["type"], font=("Arial", 11, "bold"))
-
-        x, y = out["x"], out["y"]
-        c.create_oval(x - INPUT_R, y - INPUT_R, x + INPUT_R, y + INPUT_R,
-                      fill=self._color(out["id"]), outline="black")
-        c.create_text(x, y, text=str(self.values[out["id"]]), fill="white",
-                      font=("Arial", 11, "bold"))
-        c.create_text(x, y + 28, text="OUTPUT", font=("Arial", 9))
+            self._draw_gate(gate)
+        self._draw_node(out["id"], out["x"], out["y"], str(self.values[out["id"]]))
 
 
 def run():
