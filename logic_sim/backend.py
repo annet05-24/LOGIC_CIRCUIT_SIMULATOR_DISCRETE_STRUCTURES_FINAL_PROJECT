@@ -9,7 +9,7 @@ While Members 1 and 2 are still working, USE_MOCK = True makes the UI run on
 fake data from mock_backend.py. When both modules are ready, set it to False.
 """
 
-USE_MOCK = True
+USE_MOCK = False
 
 if USE_MOCK:
     from logic_sim.mock_backend import get_circuit, get_truth_table, propagate
