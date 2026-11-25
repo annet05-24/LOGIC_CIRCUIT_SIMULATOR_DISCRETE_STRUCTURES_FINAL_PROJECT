@@ -19,6 +19,8 @@ MATCH_COLOR = ON_COLOR          # green text: table and circuit agree
 MISMATCH_COLOR = "#dc2626"      # red text: they disagree
 GATE_W, GATE_H = shapes.GATE_W, shapes.GATE_H
 INPUT_R = 14
+TABLE_HEIGHT = 300       # the truth table box is as tall as the circuit canvas
+TABLE_MAX_WIDTH = 420    # wider tables (many variables) scroll sideways
 
 
 # The logic builder buttons. Change these lists to add or remove symbols.
@@ -89,8 +91,26 @@ class SimulatorApp:
         self.canvas = tk.Canvas(main, width=600, height=300, bg="white")
         self.canvas.pack(side="left")
 
-        self.table_frame = tk.Frame(main, padx=12)
-        self.table_frame.pack(side="left", anchor="n")
+        # The truth table lives in a scrollable box with a fixed size, so a
+        # table with 64 or 256 rows no longer stretches the window off screen.
+        table_box = tk.Frame(main, padx=12)
+        table_box.pack(side="left", anchor="n")
+        self.table_canvas = tk.Canvas(table_box, width=200, height=TABLE_HEIGHT,
+                                      highlightthickness=0)
+        self.y_scroll = tk.Scrollbar(table_box, orient="vertical",
+                                     command=self.table_canvas.yview)
+        self.x_scroll = tk.Scrollbar(table_box, orient="horizontal",
+                                     command=self.table_canvas.xview)
+        self.table_canvas.configure(yscrollcommand=self.y_scroll.set,
+                                    xscrollcommand=self.x_scroll.set)
+        self.table_canvas.grid(row=0, column=0)
+        self.y_scroll.grid(row=0, column=1, sticky="ns")
+        self.x_scroll.grid(row=1, column=0, sticky="ew")
+
+        self.table_frame = tk.Frame(self.table_canvas)    # the labels go in here
+        self.table_canvas.create_window(0, 0, window=self.table_frame, anchor="nw")
+        self.table_frame.bind("<Configure>", self._fit_table)
+        self.root.bind_all("<MouseWheel>", self._on_mouse_wheel)
 
         
         # Typing in the box also updates the builder; Enter builds the circuit.
@@ -211,6 +231,41 @@ class SimulatorApp:
                 cells.append(cell)
             self.row_labels.append(cells)
 
+        self.table_canvas.yview_moveto(0)     # a new table starts at the top
+        self.table_canvas.xview_moveto(0)
+
+    def _fit_table(self, event=None):
+        """Size the scroll box to the table, and show scrollbars only when needed."""
+        width = self.table_frame.winfo_reqwidth()
+        height = self.table_frame.winfo_reqheight()
+        self.table_canvas.configure(scrollregion=(0, 0, width, height),
+                                    width=min(width, TABLE_MAX_WIDTH),
+                                    height=min(height, TABLE_HEIGHT))
+        for bar, needed in ((self.y_scroll, height > TABLE_HEIGHT),
+                            (self.x_scroll, width > TABLE_MAX_WIDTH)):
+            if needed:
+                bar.grid()
+            else:
+                bar.grid_remove()
+
+    def _on_mouse_wheel(self, event):
+        """Scroll the table with the mouse wheel, but only when the mouse is over it."""
+        widget = self.root.winfo_containing(event.x_root, event.y_root)
+        if widget is not None and str(widget).startswith(str(self.table_canvas)):
+            self.table_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+
+    def _scroll_to_row(self, index):
+        """If row `index` is out of view, scroll so it sits in the middle of the box."""
+        self.table_frame.update_idletasks()        # make sure the rows have positions
+        total = self.table_frame.winfo_reqheight()
+        if total <= TABLE_HEIGHT:
+            return                                  # the whole table fits, no scrolling
+        cell = self.row_labels[index][0]
+        top, bottom = cell.winfo_y(), cell.winfo_y() + cell.winfo_height()
+        view_top = self.table_canvas.canvasy(0)
+        if top < view_top or bottom > view_top + TABLE_HEIGHT:
+            self.table_canvas.yview_moveto(max(0, top - TABLE_HEIGHT / 2) / total)
+
     def _find_row(self, assignment):
         """Return the index of the truth table row matching `assignment`, or None."""
         for i, row in enumerate(self.table["rows"]):
@@ -226,6 +281,8 @@ class SimulatorApp:
             color = ROW_HIGHLIGHT if i == match else ROW_NORMAL
             for cell in cells:
                 cell.config(bg=color)
+        if match is not None:
+            self._scroll_to_row(match)     # keep the highlighted row on screen
 
     def _update_status(self, assignment):
         """Compare the table's expected output with the circuit's actual output."""
