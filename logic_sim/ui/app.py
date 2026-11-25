@@ -8,7 +8,7 @@ import tkinter as tk
 import traceback
 
 from logic_sim import backend
-from logic_sim.ui import shapes
+from logic_sim.ui import builder, shapes
 
 ON_COLOR = "#16a34a"    # green = signal is 1
 OFF_COLOR = "#9ca3af"   # grey  = signal is 0
@@ -20,6 +20,10 @@ MISMATCH_COLOR = "#dc2626"      # red text: they disagree
 GATE_W, GATE_H = shapes.GATE_W, shapes.GATE_H
 INPUT_R = 14
 
+
+# The logic builder buttons. Change these lists to add or remove symbols.
+BUILDER_VARIABLES = ["A", "B", "C", "D"]
+BUILDER_OPERATORS = ["AND", "OR", "NOT", "->", "(", ")"]
 
 class SimulatorApp:
     def __init__(self, root):
@@ -45,6 +49,28 @@ class SimulatorApp:
         self.entry.insert(0, "(A AND B) OR NOT C")
         tk.Button(top, text="Build circuit", command=self.on_build).pack(side="left")
 
+                # Logic builder: click symbols instead of typing them.
+        builder_row = tk.Frame(self.root, padx=8)
+        builder_row.pack(fill="x")
+
+        self.builder_buttons = {}        # {"A": Button, "AND": Button, ...}
+        for group in (BUILDER_VARIABLES, BUILDER_OPERATORS):
+            for token in group:
+                button = tk.Button(builder_row, text=token, width=4,
+                                   command=lambda t=token: self._add_token(t))
+                button.pack(side="left", padx=1)
+                self.builder_buttons[token] = button
+            tk.Label(builder_row, text="  ").pack(side="left")    # a gap between groups
+
+        tk.Button(builder_row, text="Backspace",
+                  command=self._backspace).pack(side="left", padx=1)
+        tk.Button(builder_row, text="Clear",
+                  command=self._clear_expression).pack(side="left", padx=1)
+
+        self.smart_var = tk.IntVar(value=1)
+        tk.Checkbutton(builder_row, text="Smart mode", variable=self.smart_var,
+                       command=self._refresh_builder).pack(side="left", padx=8)
+
         self.error_label = tk.Label(self.root, text="", fg="#dc2626", anchor="w", padx=8)
         self.error_label.pack(fill="x")
 
@@ -65,6 +91,44 @@ class SimulatorApp:
 
         self.table_frame = tk.Frame(main, padx=12)
         self.table_frame.pack(side="left", anchor="n")
+
+        
+        # Typing in the box also updates the builder; Enter builds the circuit.
+        self.entry.bind("<KeyRelease>", self._refresh_builder)
+        self.entry.bind("<Return>", lambda event: self.on_build())
+        self._refresh_builder()
+
+    # ---- the logic builder ----------------------------------------------
+    def _add_token(self, token):
+        """Add one symbol to the end of the expression."""
+        tokens = builder.tokenize(self.entry.get())
+        tokens.append(token)
+        self._set_expression(tokens)
+
+    def _backspace(self):
+        """Remove the last symbol."""
+        tokens = builder.tokenize(self.entry.get())
+        self._set_expression(tokens[:-1])
+
+    def _clear_expression(self):
+        """Empty the expression box."""
+        self._set_expression([])
+
+    def _set_expression(self, tokens):
+        """Show these symbols in the box, then update the buttons."""
+        self.entry.delete(0, tk.END)
+        self.entry.insert(0, " ".join(tokens))
+        self._refresh_builder()
+
+    def _refresh_builder(self, event=None):
+        """In smart mode, grey out the symbols that cannot come next."""
+        tokens = builder.tokenize(self.entry.get())
+        smart = self.smart_var.get() == 1
+        for token, button in self.builder_buttons.items():
+            if smart and not builder.can_add(tokens, token):
+                button.config(state="disabled")
+            else:
+                button.config(state="normal")
 
     # ---- reacting to the user -------------------------------------------
     def on_build(self):
