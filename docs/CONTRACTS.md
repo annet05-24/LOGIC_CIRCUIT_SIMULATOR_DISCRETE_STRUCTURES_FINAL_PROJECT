@@ -74,6 +74,18 @@ Rules:
 - A variable used several times is ONE input node whose id appears in several gates' `inputs`.
 - Every id is unique.
 
+Optional `wires` (added by Member 2's layout): one entry per gate input, already
+routed around the gates. If it is present the UI draws these lines; if not, the UI
+draws simple wires itself.
+
+```python
+"wires": [ {"from": "A", "to": "g2", "points": [54, 100, 80, 100, 80, 160, 168, 160]}, ... ]
+```
+
+- `points` is a flat list `x1, y1, x2, y2, ...` made only of horizontal and vertical lines.
+- A wire is colored by the value of its `from` node.
+- The wire from the last gate to `OUT` is not in this list (it is always straight).
+
 ## 6. Propagation (UI → Member 2 → UI)
 
 Input: the circuit and an assignment `{"A": 1, "B": 0, "C": 1}`.

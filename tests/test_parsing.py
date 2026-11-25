@@ -49,6 +49,35 @@ class TestMemberOneParser(unittest.TestCase):
         with self.assertRaises(ExpressionError):
             parse("")
 
+    def test_tautology_builds_a_circuit(self):
+        # Used to fail with "Constants are not supported".
+        ast = parse("A OR NOT A")
+        self.assertEqual(ast["type"], "OR")
+        outputs = [row["output"] for row in truth_table(ast)["rows"]]
+        self.assertEqual(outputs, [1, 1])
+
+    def test_contradiction_builds_a_circuit(self):
+        ast = parse("A AND NOT A")
+        self.assertEqual(ast["type"], "AND")
+        outputs = [row["output"] for row in truth_table(ast)["rows"]]
+        self.assertEqual(outputs, [0, 0])
+
+    def test_constant_result_with_implication(self):
+        # A -> A is always true; the arrow must still become AND/OR/NOT only.
+        ast = parse("A -> A")
+        self.assertEqual(ast["type"], "OR")
+        self.assertEqual(ast["left"]["type"], "NOT")
+        outputs = [row["output"] for row in truth_table(ast)["rows"]]
+        self.assertEqual(outputs, [1, 1])
+        ast = parse("A <-> NOT A")      # always false
+        self.assertEqual(ast["type"], "AND")
+        outputs = [row["output"] for row in truth_table(ast)["rows"]]
+        self.assertEqual(outputs, [0, 0])
+
+    def test_typed_constants_still_rejected(self):
+        with self.assertRaises(ExpressionError):
+            parse("A OR 1")
+
 
 if __name__ == "__main__":
     unittest.main()
