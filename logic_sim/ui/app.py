@@ -359,11 +359,18 @@ class SimulatorApp:
         nodes = self._lookup()
 
         # Wires first, so the shapes are drawn on top of the wire ends.
-        for gate in self.circuit["gates"]:
-            for i, source_id in enumerate(gate["inputs"]):
-                sx, sy = self._output_point(nodes[source_id])
-                tx, ty = self._input_point(gate, i)
-                self._draw_wire(sx, sy, tx, ty, self._color(source_id))
+        if "wires" in self.circuit:
+            # The layout already routed every wire around the gates: just draw it.
+            for wire in self.circuit["wires"]:
+                self.canvas.create_line(*wire["points"], fill=self._color(wire["from"]),
+                                        width=3)
+        else:
+            # No routes given (e.g. the mock backend): simple wires with one bend.
+            for gate in self.circuit["gates"]:
+                for i, source_id in enumerate(gate["inputs"]):
+                    sx, sy = self._output_point(nodes[source_id])
+                    tx, ty = self._input_point(gate, i)
+                    self._draw_wire(sx, sy, tx, ty, self._color(source_id))
 
         out = self.circuit["output"]
         sx, sy = self._output_point(nodes[out["from"]])

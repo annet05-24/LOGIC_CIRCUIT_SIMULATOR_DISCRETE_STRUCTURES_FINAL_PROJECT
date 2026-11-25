@@ -34,7 +34,23 @@ SAMPLE_ASTS = [
     OR(NOT(AND(NOT(A), NOT(B))), AND(C, NOT(D))),
     AND(AND(AND(OR(A, B), OR(C, D)), OR(E, F)), OR(G, H)),
     AND(A, OR(B, AND(C, OR(D, NOT(E))))),
+    AND(OR(NOT(A), B), OR(NOT(B), A)),      # A <-> B after the parser rewrites it
 ]
+
+
+def segments(points):
+    """Split a flat [x1, y1, x2, y2, ...] list into ((xa, ya), (xb, yb)) pieces."""
+    pairs = list(zip(points[0::2], points[1::2]))
+    return list(zip(pairs, pairs[1:]))
+
+
+def crosses_gate(segment, gate):
+    """True if a horizontal or vertical segment passes through the gate's box."""
+    (xa, ya), (xb, yb) = segment
+    left, right = gate["x"] - GATE_W / 2 + 1, gate["x"] + GATE_W / 2 - 1
+    top, bottom = gate["y"] - GATE_H / 2 + 1, gate["y"] + GATE_H / 2 - 1
+    return (min(xa, xb) < right and max(xa, xb) > left and
+            min(ya, yb) < bottom and max(ya, yb) > top)
 
 
 def all_nodes(circuit):
@@ -142,6 +158,44 @@ class LayoutTests(unittest.TestCase):
         not_gate = circuit["gates"][0]
         self.assertEqual(not_gate["type"], "NOT")
         self.assertEqual(not_gate["y"], a["y"])
+
+    def test_one_wire_per_gate_input(self):
+        for ast in SAMPLE_ASTS:
+            circuit = build_circuit(ast)
+            expected = sorted((s, g["id"]) for g in circuit["gates"] for s in g["inputs"])
+            actual = sorted((w["from"], w["to"]) for w in circuit["wires"])
+            self.assertEqual(actual, expected)
+
+    def test_wires_are_horizontal_and_vertical_lines(self):
+        for ast in SAMPLE_ASTS:
+            for wire in build_circuit(ast)["wires"]:
+                for (xa, ya), (xb, yb) in segments(wire["points"]):
+                    self.assertTrue(xa == xb or ya == yb, wire)
+
+    def test_wires_never_run_through_other_gates(self):
+        # Problem 3: wires that skip a column used to cut through its gates.
+        for ast in SAMPLE_ASTS:
+            circuit = build_circuit(ast)
+            for wire in circuit["wires"]:
+                for gate in circuit["gates"]:
+                    if gate["id"] in (wire["from"], wire["to"]):
+                        continue
+                    for segment in segments(wire["points"]):
+                        self.assertFalse(crosses_gate(segment, gate),
+                                         f"wire {wire['from']}->{wire['to']} "
+                                         f"runs through {gate['id']}")
+
+    def test_vertical_pieces_do_not_overlap(self):
+        # Two different wires must never share the same vertical line.
+        for ast in SAMPLE_ASTS:
+            verticals = []
+            for wire in build_circuit(ast)["wires"]:
+                for (xa, ya), (xb, yb) in segments(wire["points"]):
+                    if xa == xb and ya != yb:
+                        verticals.append((xa, min(ya, yb), max(ya, yb), wire["from"]))
+            for v1, v2 in itertools.combinations(verticals, 2):
+                if v1[0] == v2[0] and v1[3] != v2[3]:
+                    self.assertFalse(v1[1] < v2[2] and v2[1] < v1[2], (v1, v2))
 
     def test_inputs_keep_order_of_first_use(self):
         # Same order as the truth table columns, so toggles and table line up.
