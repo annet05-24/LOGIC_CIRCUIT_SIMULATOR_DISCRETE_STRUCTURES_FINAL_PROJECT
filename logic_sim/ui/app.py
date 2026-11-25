@@ -5,18 +5,25 @@ This file only DISPLAYS things. It never computes logic itself: it asks the
 backend for a circuit, wire values and a truth table, then draws them.
 """
 import tkinter as tk
+import traceback
 
 from logic_sim import backend
-from logic_sim.ui import shapes
+from logic_sim.ui import builder, shapes
 
 ON_COLOR = "#16a34a"    # green = signal is 1
 OFF_COLOR = "#9ca3af"   # grey  = signal is 0
 GATE_FILL = "#f3f4f6"
 ROW_HIGHLIGHT = "#fde68a"   # yellow = the truth table row that matches the toggles
 ROW_NORMAL = "white"
+MATCH_COLOR = ON_COLOR          # green text: table and circuit agree
+MISMATCH_COLOR = "#dc2626"      # red text: they disagree
 GATE_W, GATE_H = shapes.GATE_W, shapes.GATE_H
 INPUT_R = 14
 
+
+# The logic builder buttons. Change these lists to add or remove symbols.
+BUILDER_VARIABLES = ["A", "B", "C", "D"]
+BUILDER_OPERATORS = ["AND", "OR", "NOT", "->", "(", ")"]
 
 class SimulatorApp:
     def __init__(self, root):
@@ -42,11 +49,38 @@ class SimulatorApp:
         self.entry.insert(0, "(A AND B) OR NOT C")
         tk.Button(top, text="Build circuit", command=self.on_build).pack(side="left")
 
+                # Logic builder: click symbols instead of typing them.
+        builder_row = tk.Frame(self.root, padx=8)
+        builder_row.pack(fill="x")
+
+        self.builder_buttons = {}        # {"A": Button, "AND": Button, ...}
+        for group in (BUILDER_VARIABLES, BUILDER_OPERATORS):
+            for token in group:
+                button = tk.Button(builder_row, text=token, width=4,
+                                   command=lambda t=token: self._add_token(t))
+                button.pack(side="left", padx=1)
+                self.builder_buttons[token] = button
+            tk.Label(builder_row, text="  ").pack(side="left")    # a gap between groups
+
+        tk.Button(builder_row, text="Backspace",
+                  command=self._backspace).pack(side="left", padx=1)
+        tk.Button(builder_row, text="Clear",
+                  command=self._clear_expression).pack(side="left", padx=1)
+
+        self.smart_var = tk.IntVar(value=1)
+        tk.Checkbutton(builder_row, text="Smart mode", variable=self.smart_var,
+                       command=self._refresh_builder).pack(side="left", padx=8)
+
         self.error_label = tk.Label(self.root, text="", fg="#dc2626", anchor="w", padx=8)
         self.error_label.pack(fill="x")
 
         self.toggle_frame = tk.Frame(self.root, padx=8, pady=4)
         self.toggle_frame.pack(fill="x")
+
+        # Task 7: tells you whether the truth table and the circuit agree.
+        self.status_label = tk.Label(self.root, text="", font=("Arial", 11, "bold"),
+                                     anchor="w", padx=8)
+        self.status_label.pack(fill="x")
 
         # The circuit on the left, the truth table on the right.
         main = tk.Frame(self.root)
@@ -58,6 +92,44 @@ class SimulatorApp:
         self.table_frame = tk.Frame(main, padx=12)
         self.table_frame.pack(side="left", anchor="n")
 
+        
+        # Typing in the box also updates the builder; Enter builds the circuit.
+        self.entry.bind("<KeyRelease>", self._refresh_builder)
+        self.entry.bind("<Return>", lambda event: self.on_build())
+        self._refresh_builder()
+
+    # ---- the logic builder ----------------------------------------------
+    def _add_token(self, token):
+        """Add one symbol to the end of the expression."""
+        tokens = builder.tokenize(self.entry.get())
+        tokens.append(token)
+        self._set_expression(tokens)
+
+    def _backspace(self):
+        """Remove the last symbol."""
+        tokens = builder.tokenize(self.entry.get())
+        self._set_expression(tokens[:-1])
+
+    def _clear_expression(self):
+        """Empty the expression box."""
+        self._set_expression([])
+
+    def _set_expression(self, tokens):
+        """Show these symbols in the box, then update the buttons."""
+        self.entry.delete(0, tk.END)
+        self.entry.insert(0, " ".join(tokens))
+        self._refresh_builder()
+
+    def _refresh_builder(self, event=None):
+        """In smart mode, grey out the symbols that cannot come next."""
+        tokens = builder.tokenize(self.entry.get())
+        smart = self.smart_var.get() == 1
+        for token, button in self.builder_buttons.items():
+            if smart and not builder.can_add(tokens, token):
+                button.config(state="disabled")
+            else:
+                button.config(state="normal")
+
     # ---- reacting to the user -------------------------------------------
     def on_build(self):
         """Called when 'Build circuit' is clicked."""
@@ -65,16 +137,31 @@ class SimulatorApp:
         try:
             circuit = backend.get_circuit(text)
             table = backend.get_truth_table(text)
-        except ValueError as err:
-            self.error_label.config(text=str(err))
+            self.circuit = circuit       # only replace the old ones once BOTH worked
+            self.table = table
+            self._make_toggles()
+            self._build_table()
+        except Exception as err:
+            self._report(err, "building the circuit")
             return     # keep whatever was on screen before
 
         self.error_label.config(text="")
-        self.circuit = circuit
-        self.table = table
-        self._make_toggles()
-        self._build_table()
         self.update_circuit()
+
+    def _report(self, err, doing):
+        """Show an error in red. `doing` says what we were trying to do.
+
+        Call this from inside an `except` block.
+        """
+        if isinstance(err, ValueError):
+            message = str(err)                      # the user's input is wrong: show it as is
+        elif isinstance(err, NotImplementedError):
+            message = "Not built yet: " + str(err)  # a teammate's part is still a placeholder
+        else:
+            message = ("Unexpected error while " + doing + ": "
+                       + type(err).__name__ + ": " + str(err))
+            traceback.print_exc()                   # full details go to the terminal
+        self.error_label.config(text=message)
 
     def _make_toggles(self):
         """One checkbox per input variable found in the circuit."""
@@ -93,9 +180,13 @@ class SimulatorApp:
     def update_circuit(self):
         """Read the toggles, ask the backend for wire values, then redraw."""
         assignment = {name: var.get() for name, var in self.toggle_vars.items()}
-        self.values = backend.propagate(self.circuit, assignment)
-        self.draw()
-        self._highlight_row(assignment)
+        try:
+            self.values = backend.propagate(self.circuit, assignment)
+            self.draw()
+            self._highlight_row(assignment)
+            self._update_status(assignment)
+        except Exception as err:
+            self._report(err, "updating the circuit")
 
     # ---- the truth table ------------------------------------------------
     def _build_table(self):
@@ -120,18 +211,40 @@ class SimulatorApp:
                 cells.append(cell)
             self.row_labels.append(cells)
 
-    def _highlight_row(self, assignment):
-        """Color the row that matches the current toggles; the others stay white."""
-        match = None
+    def _find_row(self, assignment):
+        """Return the index of the truth table row matching `assignment`, or None."""
         for i, row in enumerate(self.table["rows"]):
             if row["inputs"] == assignment:
-                match = i
-                break
+                return i
+        return None
+
+    def _highlight_row(self, assignment):
+        """Color the row that matches the current toggles; the others stay white."""
+        match = self._find_row(assignment)
 
         for i, cells in enumerate(self.row_labels):
             color = ROW_HIGHLIGHT if i == match else ROW_NORMAL
             for cell in cells:
                 cell.config(bg=color)
+
+    def _update_status(self, assignment):
+        """Compare the table's expected output with the circuit's actual output."""
+        index = self._find_row(assignment)
+        if index is None:
+            self.status_label.config(text="No truth table row matches these inputs.",
+                                     fg=MISMATCH_COLOR)
+            return
+
+        expected = self.table["rows"][index]["output"]            # from the truth table
+        actual = self.values[self.circuit["output"]["id"]]        # from the circuit
+
+        if expected == actual:
+            text = "Expected " + str(expected) + " (truth table), circuit gives " + str(actual) + " - match"
+            color = MATCH_COLOR
+        else:
+            text = "MISMATCH: truth table expects " + str(expected) + ", circuit gives " + str(actual)
+            color = MISMATCH_COLOR
+        self.status_label.config(text=text, fg=color)
 
     # ---- drawing the circuit --------------------------------------------
     def _color(self, node_id):
