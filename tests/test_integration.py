@@ -29,6 +29,11 @@ EXPRESSIONS = [
     "(A -> B) AND (B -> C)",
     # symbol spellings
     "A & !B | C",
+    # tautologies and contradictions (always 1 / always 0)
+    "A OR NOT A",
+    "A AND NOT A",
+    "(A -> B) OR (B -> A)",
+    "A <-> NOT A",
 ]
 
 

@@ -45,7 +45,17 @@ def _to_contract_ast(node):
     if isinstance(node, _engine.Or):
         return {"type": "OR", "left": _to_contract_ast(node.left),
                 "right": _to_contract_ast(node.right)}
-    raise ExpressionError("Constants are not supported. Use variables A-Z.")
+    # Implication and biconditional are rewritten with the same laws the
+    # engine uses, so only AND, OR and NOT reach the circuit:
+    #   p -> q   ==  NOT p OR q
+    #   p <-> q  ==  (NOT p OR q) AND (NOT q OR p)
+    if isinstance(node, _engine.Implies):
+        return _to_contract_ast(_engine.Or(_engine.Not(node.left), node.right))
+    if isinstance(node, _engine.Iff):
+        return _to_contract_ast(_engine.And(
+            _engine.Or(_engine.Not(node.left), node.right),
+            _engine.Or(_engine.Not(node.right), node.left)))
+    raise ExpressionError("Constants 0 and 1 are not supported. Use variables A-Z.")
 
 
 def parse(expression):
@@ -57,6 +67,12 @@ def parse(expression):
         # Eliminate implication and biconditional; circuit gates only support
         # AND, OR and NOT. This also applies basic Boolean simplification.
         simplified, _steps = _engine.simplify(original)
+        if isinstance(simplified, _engine.Const):
+            # Tautologies (A OR NOT A) and contradictions (A AND NOT A)
+            # simplify to a constant, which has no gates. Build the circuit
+            # from the expression as typed instead: it is still a valid
+            # AND/OR/NOT circuit, and its output is always 1 or always 0.
+            return _to_contract_ast(original)
         return _to_contract_ast(simplified)
     except _engine.ParseError as error:
         raise ExpressionError(error.message, error.position) from error
