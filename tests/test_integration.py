@@ -10,7 +10,25 @@ from logic_sim import backend
 
 # Add more expressions here as the parser gets more capable.
 EXPRESSIONS = [
+    # basics
+    "A",
+    "NOT A",
+    "A AND B",
+    "A OR B",
     "(A AND B) OR NOT C",
+    # De Morgan style and nesting
+    "NOT (A AND B)",
+    "NOT (A OR B) AND C",
+    "(A OR B) AND (NOT A OR C)",
+    "A AND (B OR (C AND (D OR NOT E)))",
+    "((A OR B) AND (C OR D)) AND NOT (A AND D)",
+    "(A AND B) OR (C AND D) OR (E AND F)",
+    # operators the parser rewrites into AND / OR / NOT
+    "A -> B",
+    "A <-> B",
+    "(A -> B) AND (B -> C)",
+    # symbol spellings
+    "A & !B | C",
 ]
 
 
